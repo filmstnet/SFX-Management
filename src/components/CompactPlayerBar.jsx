@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { Play, Pause, Move, Volume2, Trash2 } from 'lucide-react';
 
 export default function CompactPlayerBar({
@@ -10,10 +10,20 @@ export default function CompactPlayerBar({
   onSeek,
   onRequestDeleteSound
 }) {
+  const lastDragTimeRef = useRef(0);
+
   if (!activeSound) return null;
 
   const handleDragStart = (e) => {
+    e.stopPropagation();
     if (!activeSound || !activeSound.filePath) return;
+    const now = Date.now();
+    if (now - lastDragTimeRef.current < 400) {
+      e.preventDefault();
+      return;
+    }
+    lastDragTimeRef.current = now;
+
     if (window.electronAPI) {
       e.preventDefault();
       window.electronAPI.startDrag(activeSound.filePath);

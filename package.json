@@ -1,7 +1,7 @@
 {
   "name": "filmst-sfx",
   "productName": "FilmSt - Sfx",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Desktop SFX Library & Instant Drag-and-Drop for Video Editors (FilmSt - Sfx)",
   "main": "electron/main.cjs",
   "type": "module",
@@ -48,7 +48,8 @@
     ],
     "asar": true,
     "asarUnpack": [
-      "**/drag-icon.png"
+      "**/drag-icon.png",
+      "demo-sfx/**/*"
     ],
     "mac": {
       "icon": "build/icon.icns",

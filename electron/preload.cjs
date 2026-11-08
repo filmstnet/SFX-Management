@@ -1,11 +1,18 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+let lastDragAt = 0;
+
 contextBridge.exposeInMainWorld('electronAPI', {
   selectFolder: () => ipcRenderer.invoke('dialog:select-folder'),
   scanFolder: (dirPath) => ipcRenderer.invoke('scanner:scan-folder', dirPath),
   getCachedLibrary: () => ipcRenderer.invoke('cache:get-library'),
   saveLibraryCache: (data) => ipcRenderer.invoke('cache:save-library', data),
-  startDrag: (filePath) => ipcRenderer.send('drag:start', filePath),
+  startDrag: (filePath) => {
+    const now = Date.now();
+    if (now - lastDragAt < 300) return;
+    lastDragAt = now;
+    ipcRenderer.send('drag:start', filePath);
+  },
   showInFolder: (filePath) => ipcRenderer.invoke('shell:show-item', filePath),
   deletePermanently: (filePath) => ipcRenderer.invoke('file:delete-permanently', filePath),
   toggleAlwaysOnTop: () => ipcRenderer.invoke('window:toggle-always-on-top'),

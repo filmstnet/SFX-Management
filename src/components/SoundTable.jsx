@@ -51,6 +51,8 @@ export default function SoundTable({
   onShowInFinder,
   onRequestDeleteSound
 }) {
+  const lastDragTimeRef = useRef(0);
+
   if (sounds.length === 0) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-[#86868b] text-xs p-12">
@@ -83,6 +85,14 @@ export default function SoundTable({
               const isFav = favorites.has(sound.id);
 
               const handleDragStart = (e) => {
+                e.stopPropagation();
+                const now = Date.now();
+                if (now - lastDragTimeRef.current < 400) {
+                  e.preventDefault();
+                  return;
+                }
+                lastDragTimeRef.current = now;
+
                 if (window.electronAPI && sound.filePath) {
                   e.preventDefault();
                   window.electronAPI.startDrag(sound.filePath);
@@ -190,7 +200,10 @@ export default function SoundTable({
                     <div className="inline-flex items-center justify-center gap-1">
                       <div
                         draggable="true"
-                        onDragStart={handleDragStart}
+                        onDragStart={(e) => {
+                          e.stopPropagation();
+                          handleDragStart(e);
+                        }}
                         onClick={(e) => e.stopPropagation()}
                         className="cursor-grab active:cursor-grabbing inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/10 hover:bg-[#0071e3] hover:text-white text-[#f5f5f7] border border-white/10 transition duration-150 text-[10px] font-medium active:scale-95 shadow-sm"
                         title="Kéo thả trực tiếp vào Timeline dựng phim"

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
@@ -7,6 +7,37 @@ const { scanDirectory, CATEGORY_RULES } = require('./scanner.cjs');
 let mainWindow = null;
 const isDev = process.argv.includes('--dev') || process.env.VITE_DEV === '1';
 const CACHE_FILE = path.join(app.getPath('userData'), 'sfx-library-cache.json');
+
+// Re-entrancy guard for native OLE / Cocoa drag-and-drop
+let isDragging = false;
+let cachedMacDragIcon = null;
+
+function getMacDragIcon() {
+  if (cachedMacDragIcon && !cachedMacDragIcon.isEmpty()) {
+    return cachedMacDragIcon;
+  }
+  try {
+    const iconCandidates = [
+      path.join(__dirname.replace('app.asar', 'app.asar.unpacked'), 'drag-icon.png'),
+      path.join(__dirname, 'drag-icon.png'),
+      path.join(__dirname, '../public/icon.png'),
+      path.join(__dirname, '../build/icon.png')
+    ];
+    for (const p of iconCandidates) {
+      if (fs.existsSync(p)) {
+        const buf = fs.readFileSync(p);
+        const img = nativeImage.createFromBuffer(buf);
+        if (!img.isEmpty()) {
+          cachedMacDragIcon = img.resize({ width: 32, height: 32 });
+          return cachedMacDragIcon;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[Drag] Failed to load macOS drag icon:', err);
+  }
+  return null;
+}
 
 // Scheme registration must occur before app is ready
 protocol.registerSchemesAsPrivileged([
@@ -182,11 +213,13 @@ ipcMain.handle('cache:get-library', async () => {
 
   // If no custom folder cached yet, automatically provide starter pack with real files on disk
   try {
+    const unpackedDemoDir = path.resolve(__dirname.replace('app.asar', 'app.asar.unpacked'), '../demo-sfx');
     const defaultDemoDir = path.resolve(__dirname, '../demo-sfx');
-    if (fs.existsSync(defaultDemoDir)) {
-      const starterSounds = scanDirectory(defaultDemoDir, 100);
+    const actualDemoDir = fs.existsSync(unpackedDemoDir) ? unpackedDemoDir : defaultDemoDir;
+    if (fs.existsSync(actualDemoDir)) {
+      const starterSounds = scanDirectory(actualDemoDir, 100);
       return {
-        libraryPath: defaultDemoDir,
+        libraryPath: actualDemoDir,
         sounds: starterSounds
       };
     }
@@ -213,32 +246,61 @@ ipcMain.handle('cache:save-library', async (event, data) => {
 
 // Native OS Drag & Drop to NLE Timeline (DaVinci Resolve / Premiere Pro / Final Cut Pro / CapCut)
 ipcMain.on('drag:start', (event, filePath) => {
+  if (isDragging) {
+    console.warn('[Drag] Drag operation already active, ignoring concurrent trigger.');
+    return;
+  }
+  isDragging = true;
+
   try {
-    if (!filePath) return;
+    if (!filePath || typeof filePath !== 'string') return;
     const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(filePath);
     if (!fs.existsSync(absPath)) {
       console.warn('[Drag] File does not exist on disk:', absPath);
       return;
     }
 
-    const unpackedIcon = path.join(__dirname.replace('app.asar', 'app.asar.unpacked'), 'drag-icon.png');
-    const iconPath = path.join(__dirname, 'drag-icon.png');
-    const fallbackIcon = path.join(__dirname, '../public/icon.png');
-    let finalIcon = iconPath;
-    if (fs.existsSync(unpackedIcon)) {
-      finalIcon = unpackedIcon;
-    } else if (fs.existsSync(iconPath)) {
-      finalIcon = iconPath;
-    } else if (fs.existsSync(fallbackIcon)) {
-      finalIcon = fallbackIcon;
+    // Ensure file is on physical disk outside app.asar so external NLEs can read it without failing
+    let targetPath = absPath;
+    if (targetPath.includes('app.asar')) {
+      const unpackedCandidate = targetPath.replace('app.asar', 'app.asar.unpacked');
+      if (fs.existsSync(unpackedCandidate)) {
+        targetPath = unpackedCandidate;
+      } else {
+        const tempDir = path.join(app.getPath('temp'), 'filmst-sfx-drag');
+        fs.mkdirSync(tempDir, { recursive: true });
+        const tempFilePath = path.join(tempDir, path.basename(targetPath));
+        fs.writeFileSync(tempFilePath, fs.readFileSync(targetPath));
+        targetPath = tempFilePath;
+      }
     }
 
-    event.sender.startDrag({
-      file: absPath,
-      icon: finalIcon
-    });
+    const normalizedPath = process.platform === 'win32'
+      ? path.win32.normalize(targetPath)
+      : path.normalize(targetPath);
+
+    // On Windows: Omit icon so Windows OLE / Explorer / Premiere / DaVinci Resolve render
+    // their native drag visuals without crashing Chromium's DoDragDrop message pump.
+    // On macOS: Electron strictly requires a non-empty NativeImage icon.
+    const dragItem = {
+      file: normalizedPath
+    };
+
+    if (process.platform === 'darwin') {
+      const macIcon = getMacDragIcon();
+      if (macIcon && !macIcon.isEmpty()) {
+        dragItem.icon = macIcon;
+      }
+    }
+
+    event.sender.startDrag(dragItem);
   } catch (err) {
-    console.error('Error starting native drag:', err);
+    console.error('[Drag] Error starting native drag:', err);
+  } finally {
+    // Release the drag lock after Windows OLE modal loop completes
+    setTimeout(() => {
+      isDragging = false;
+    }, 150);
   }
 });
 

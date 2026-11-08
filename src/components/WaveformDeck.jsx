@@ -10,6 +10,7 @@ export default function WaveformDeck({
   onSeek
 }) {
   const canvasRef = useRef(null);
+  const lastDragTimeRef = useRef(0);
 
   useEffect(() => {
     if (!activeSound || !canvasRef.current) return;
@@ -62,7 +63,15 @@ export default function WaveformDeck({
   };
 
   const handleDragStart = (e) => {
+    e.stopPropagation();
     if (!activeSound || !activeSound.filePath) return;
+    const now = Date.now();
+    if (now - lastDragTimeRef.current < 400) {
+      e.preventDefault();
+      return;
+    }
+    lastDragTimeRef.current = now;
+
     if (window.electronAPI) {
       e.preventDefault();
       window.electronAPI.startDrag(activeSound.filePath);
